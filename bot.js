@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf, Scenes, session, Markup } = require('telegraf');
 const { WizardScene, Stage } = Scenes;
 const db = require('./db');
+const express = require('express');
 
 // Вставьте сюда ваш токен
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -103,6 +104,17 @@ bot.command('stats', (ctx) => {
 bot.start((ctx) => ctx.reply('Здравствуйте! Я ваш помощник для ведения дневника трат.'));
 bot.help((ctx) => ctx.reply('Вы можете использовать следующие команды:\n/add - Добавить новую трату\n/stats - Просмотреть статистику'));
 
+const app = express();
+app.use(bot.webhookCallback('/tg-bot-webhook-9a8b7c6d5e4f3g2h1i0j'));
+
+// Установка вебхука
+bot.telegram.setWebhook(`https://${process.env.expensetracker1bot}.herokuapp.com/tg-bot-webhook-9a8b7c6d5e4f3g2h1i0j`);
+
+// Запуск сервера
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Сервер запущен на порту ${PORT}`);
+});
 bot.launch()
   .then(() => {
     console.log('Бот успешно запущен');
