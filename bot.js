@@ -1,10 +1,27 @@
 require('dotenv').config();
 const { Telegraf, Scenes, session, Markup } = require('telegraf');
 const { WizardScene, Stage } = Scenes;
-const db = require('./db');
+// Подключение к базе данных
+// Если используете PostgreSQL:
+const { Pool } = require('pg');
+// Или если используете SQLite:
+const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 
+// Создаём экземпляр бота
 const bot = new Telegraf(process.env.BOT_TOKEN);
+
+// Настройка базы данных
+// Использование PostgreSQL:
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
+
+// Если предпочитаете использовать SQLite:
+// const db = new sqlite3.Database('expenses.db');
 
 // Создаем мастер-сцену для добавления траты
 const addExpenseWizard = new WizardScene(
@@ -32,18 +49,24 @@ const addExpenseWizard = new WizardScene(
     ctx.reply(`Вы хотите добавить трату: ${amount} jpy в категории "${category}". Подтвердите (да/нет).`);
     return ctx.wizard.next();
   },
-  (ctx) => {
+  async (ctx) => {
     if (ctx.message.text.toLowerCase() === 'да') {
       const { amount, category } = ctx.wizard.state;
       const userId = ctx.from.id;
-      const date = new Date().toISOString();
+      const date = new Date();
 
-      db.prepare(`
-        INSERT INTO expenses (user_id, amount, category, date)
-        VALUES (?, ?, ?, ?)
-      `).run(userId, amount, category, date);
-
-      ctx.reply('Трата успешно добавлена!');
+      // Используем PostgreSQL для сохранения данных
+      try {
+        await pool.query(
+          `INSERT INTO expenses (user_id, amount, category, date)
+           VALUES ($1, $2, $3, $4)`,
+          [userId, amount, category, date]
+        );
+        ctx.reply('Трата успешно добавлена!');
+      } catch (err) {
+        console.error('Ошибка при добавлении траты:', err);
+        ctx.reply('Произошла ошибка при сохранении траты.');
+      }
     } else {
       ctx.reply('Добавление траты отменено.');
     }
@@ -59,30 +82,35 @@ bot.use(stage.middleware());
 // Команды
 bot.command('add', (ctx) => ctx.scene.enter('add-expense-wizard'));
 
-bot.command('stats', (ctx) => {
+bot.command('stats', async (ctx) => {
   const userId = ctx.from.id;
   const args = ctx.message.text.split(' ');
   const period = args[1];
 
   let dateCondition = '';
   if (period === 'день') {
-    dateCondition = "AND date >= datetime('now', '-1 day')";
+    dateCondition = "AND date >= NOW() - INTERVAL '1 day'";
   } else if (period === 'неделя') {
-    dateCondition = "AND date >= datetime('now', '-7 days')";
+    dateCondition = "AND date >= NOW() - INTERVAL '7 days'";
   } else if (period === 'месяц') {
-    dateCondition = "AND date >= datetime('now', '-1 month')";
+    dateCondition = "AND date >= NOW() - INTERVAL '1 month'";
   }
 
-  const row = db.prepare(`
-    SELECT SUM(amount) as total FROM expenses WHERE user_id = ? ${dateCondition}
-  `).get(userId);
+  try {
+    const res = await pool.query(
+      `SELECT SUM(amount) as total FROM expenses WHERE user_id = $1 ${dateCondition}`,
+      [userId]
+    );
+    const total = res.rows[0].total;
 
-  const total = row.total;
-
-  if (total) {
-    ctx.reply(`Ваши траты за ${period || 'все время'}: ${total} jpy.`);
-  } else {
-    ctx.reply('У вас пока нет записанных трат за указанный период.');
+    if (total) {
+      ctx.reply(`Ваши траты за ${period || 'все время'}: ${total} jpy.`);
+    } else {
+      ctx.reply('У вас пока нет записанных трат за указанный период.');
+    }
+  } catch (err) {
+    console.error('Ошибка при получении статистики:', err);
+    ctx.reply('Произошла ошибка при получении статистики.');
   }
 });
 
@@ -96,21 +124,27 @@ bot.catch((err, ctx) => {
 
 // Настройка Express-сервера и вебхуков
 const app = express();
-const secretPath = '/tg-bot-webhook-9a8b7c6d5e4f3g2h1i0j';
+
+// Генерируем уникальный секретный путь для вебхука
+const secretPath = `/telegraf/${bot.secretPathComponent()}`;
+
+app.use(express.json());
 app.use(bot.webhookCallback(secretPath));
 
+// Запуск сервера
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
-
-  bot.telegram.setWebhook(`https://${process.env.HEROKU_APP_NAME}.herokuapp.com${secretPath}`)
-    .then(() => {
-      console.log('Вебхук успешно установлен');
-    })
-    .catch((err) => {
-      console.error('Ошибка при установке вебхука:', err);
-    });
 });
+
+// Установка вебхука
+bot.telegram.setWebhook(`${process.env.PUBLIC_URL}${secretPath}`)
+  .then(() => {
+    console.log('Вебхук успешно установлен');
+  })
+  .catch((err) => {
+    console.error('Ошибка при установке вебхука:', err);
+  });
 
 // Обработка сигналов завершения процесса
 process.once('SIGINT', () => {
