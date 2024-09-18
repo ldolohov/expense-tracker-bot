@@ -4,8 +4,6 @@ const { WizardScene, Stage } = Scenes;
 // Подключение к базе данных
 // Если используете PostgreSQL:
 const { Pool } = require('pg');
-// Или если используете SQLite:
-const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 
 // Создаём экземпляр бота
